@@ -1539,7 +1539,7 @@ static void setup_beaglebone_old(void)
 /* BeagleBone after Rev A3 */
 static void setup_beaglebone(void)
 {
-	pr_info("The board is a AM335x Beaglebone.\n");
+	pr_info("Detected the board is a AM335x Beaglebone.\n");
 
 	/* Beagle Bone has Micro-SD slot which doesn't have Write Protect pin */
 	am335x_mmc[0].gpio_wp = -EINVAL;
