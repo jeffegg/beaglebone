@@ -18,6 +18,7 @@
 #include <linux/i2c/at24.h>
 #include <linux/phy.h>
 #include <linux/gpio.h>
+#include <linux/leds.h>
 #include <linux/spi/spi.h>
 #include <linux/spi/flash.h>
 #include <linux/input.h>
@@ -51,6 +52,9 @@
 #include <plat/usb.h>
 #include <plat/mmc.h>
 
+/* LCD controller is similar to DA850 */
+#include <video/da8xx-fb.h>
+#include <video/st7735fb.h>
 #include "board-flash.h"
 #include "cpuidle33xx.h"
 #include "mux.h"
@@ -781,12 +785,58 @@ static struct pinmux_config usb1_pin_mux[] = {
 	{NULL, 0},
 };
 
-/* pinmux for profibus */
-static struct pinmux_config profibus_pin_mux[] = {
-	{"uart1_rxd.pr1_uart0_rxd_mux1", OMAP_MUX_MODE5 | AM33XX_PIN_INPUT},
-	{"uart1_txd.pr1_uart0_txd_mux1", OMAP_MUX_MODE5 | AM33XX_PIN_OUTPUT},
-	{"mcasp0_fsr.pr1_pru0_pru_r30_5", OMAP_MUX_MODE5 | AM33XX_PIN_OUTPUT},
-	{NULL, 0},
+/* LEDS - gpio1_21 -> gpio1_24 */
+
+#define BEAGLEBONE_USR1_LED  GPIO_TO_PIN(1, 21)
+#define BEAGLEBONE_USR2_LED  GPIO_TO_PIN(1, 22)
+#define BEAGLEBONE_USR3_LED  GPIO_TO_PIN(1, 23)
+#define BEAGLEBONE_USR4_LED  GPIO_TO_PIN(1, 24)
+
+#define BEAGLEBONEDVI_USR0_LED  GPIO_TO_PIN(1, 18)
+#define BEAGLEBONEDVI_USR1_LED  GPIO_TO_PIN(1, 19)
+
+static struct gpio_led gpio_leds[] = {
+	{
+		.name			= "beaglebone::usr0",
+		.default_trigger	= "heartbeat",
+		.gpio			= BEAGLEBONE_USR1_LED,
+	},
+	{
+		.name			= "beaglebone::usr1",
+		.default_trigger	= "mmc0",
+		.gpio			= BEAGLEBONE_USR2_LED,
+	},
+	{
+		.name			= "beaglebone::usr2",
+		.gpio			= BEAGLEBONE_USR3_LED,
+	},
+	{
+		.name           = "beaglebone::usr3",
+		.gpio           = BEAGLEBONE_USR4_LED,
+	},
+};
+
+static struct gpio_led_platform_data gpio_led_info = {
+	.leds		= gpio_leds,
+	.num_leds	= ARRAY_SIZE(gpio_leds),
+};
+
+static struct platform_device leds_gpio = {
+	.name	= "leds-gpio",
+	.id	= -1,
+	.dev	= {
+		.platform_data	= &gpio_led_info,
+	},
+};
+
+static struct pinmux_config bone_pin_mux[] = {
+	/* User LED gpios (gpio1_21 to gpio1_24) */
+    {"gpmc_a5.rgmii2_td0", OMAP_MUX_MODE7 | AM33XX_PIN_OUTPUT},
+    {"gpmc_a6.rgmii2_tclk", OMAP_MUX_MODE7 | AM33XX_PIN_OUTPUT},
+    {"gpmc_a7.rgmii2_rclk", OMAP_MUX_MODE7 | AM33XX_PIN_OUTPUT},
+    {"gpmc_a8.rgmii2_rd3", OMAP_MUX_MODE7 | AM33XX_PIN_OUTPUT},
+    /* Grounding gpio1_6 (pin 3 Conn A) signals bone tester to start diag tests */
+    {"gpmc_ad6.gpio1_6", OMAP_MUX_MODE7 | AM33XX_PIN_INPUT_PULLUP},
 };
 
 /* Module pin mux for eCAP0 */
@@ -907,6 +957,15 @@ static void tsc_init(int evm_id, int profile)
 	err = platform_device_register(&tsc_device);
 	if (err)
 		pr_err("failed to register touchscreen device\n");
+}
+
+static void boneleds_init(int evm_id, int profile )
+{
+	int err;
+	setup_pin_mux(bone_pin_mux);
+	err = platform_device_register(&leds_gpio);
+	if (err)
+		pr_err("failed to register BeagleBone LEDS\n");
 }
 
 static void rgmii1_init(int evm_id, int profile)
@@ -1067,6 +1126,23 @@ static struct spi_board_info am335x_spi1_slave_info[] = {
 		.max_speed_hz  = 12000000,
 		.bus_num       = 2,
 		.chip_select   = 0,
+	},
+};
+
+static const struct st7735fb_platform_data bone_st7735fb_data = {
+	.rst_gpio	= GPIO_TO_PIN(3, 19),
+	.dc_gpio	= GPIO_TO_PIN(3, 21),
+};
+
+static struct spi_board_info bone_spi1_slave_info[] = {
+	{
+		.modalias      = "adafruit_tft18",
+		.platform_data	= &bone_st7735fb_data,
+		.irq           = -1,
+		.max_speed_hz  = 8000000,
+		.bus_num       = 2,
+		.chip_select   = 0,
+		.mode          = SPI_MODE_3,
 	},
 };
 
@@ -1297,6 +1373,14 @@ static void spi1_init(int evm_id, int profile)
 	return;
 }
 
+/* setup bone spi1 */
+static void bone_spi1_init(int evm_id, int profile)
+{
+	setup_pin_mux(spi1_pin_mux);
+	spi_register_board_info(bone_spi1_slave_info,
+			ARRAY_SIZE(bone_spi1_slave_info));
+	return;
+}
 
 static int beaglebone_phy_fixup(struct phy_device *phydev)
 {
@@ -1448,6 +1532,8 @@ static struct evm_dev_cfg beaglebone_old_dev_cfg[] = {
 	{usb0_init,	DEV_ON_BASEBOARD, PROFILE_NONE},
 	{usb1_init,	DEV_ON_BASEBOARD, PROFILE_NONE},
 	{mmc0_init,	DEV_ON_BASEBOARD, PROFILE_NONE},
+	{boneleds_init,	DEV_ON_BASEBOARD, PROFILE_ALL},
+	
 	{NULL, 0, 0},
 };
 
@@ -1457,6 +1543,9 @@ static struct evm_dev_cfg beaglebone_dev_cfg[] = {
 	{usb0_init,	DEV_ON_BASEBOARD, PROFILE_NONE},
 	{usb1_init,	DEV_ON_BASEBOARD, PROFILE_NONE},
 	{mmc0_init,	DEV_ON_BASEBOARD, PROFILE_NONE},
+	{boneleds_init,	DEV_ON_BASEBOARD, PROFILE_ALL},	
+	/* HACK ALERT */
+	{bone_spi1_init, DEV_ON_BASEBOARD, PROFILE_NONE},
 	{NULL, 0, 0},
 };
 
@@ -1539,7 +1628,7 @@ static void setup_beaglebone_old(void)
 /* BeagleBone after Rev A3 */
 static void setup_beaglebone(void)
 {
-	pr_info("Detected the board is a AM335x Beaglebone.\n");
+	pr_info("The board is a AM335x Beaglebone.\n");
 
 	/* Beagle Bone has Micro-SD slot which doesn't have Write Protect pin */
 	am335x_mmc[0].gpio_wp = -EINVAL;
